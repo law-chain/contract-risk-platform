@@ -9,13 +9,13 @@ import type { Engagement } from '../../types';
 interface Props {
   engagement: Engagement | null;
   engagementId: number | null;
-  onCreate: (data: Record<string, unknown>) => void;
+  onCreate: (data: Record<string, unknown>) => Promise<void>;
   onSaved: () => void;
 }
 
 export default function ContextStep({ engagement, engagementId, onCreate, onSaved }: Props) {
   const queryClient = useQueryClient();
-  const { register, handleSubmit } = useForm({
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm({
     values: engagement ? {
       name: engagement.name,
       description: engagement.description,
@@ -65,11 +65,11 @@ export default function ContextStep({ engagement, engagementId, onCreate, onSave
   const [partyForm, setPartyForm] = useState({ name: '', role: 'buyer' });
   const [gsForm, setGSForm] = useState({ name: '', supply_type: 'goods', description: '', use_context: '', replaceability: 'replaceable' });
 
-  const onSubmit = (data: Record<string, unknown>) => {
+  const onSubmit = async (data: Record<string, unknown>) => {
     if (engagementId) {
       updateMut.mutate(data as Partial<Engagement>);
     } else {
-      onCreate(data);
+      await onCreate(data);
     }
   };
 
@@ -80,7 +80,8 @@ export default function ContextStep({ engagement, engagementId, onCreate, onSave
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-            <input {...register('name', { required: true })} className="w-full border border-gray-300 rounded-md px-3 py-2" />
+            <input {...register('name', { required: 'Name is required' })} className={`w-full border rounded-md px-3 py-2 ${errors.name ? 'border-red-500' : 'border-gray-300'}`} />
+            {errors.name && <p className="text-red-600 text-sm mt-1">{errors.name.message as string}</p>}
           </div>
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Industry</label>
@@ -104,8 +105,8 @@ export default function ContextStep({ engagement, engagementId, onCreate, onSave
           <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
           <textarea {...register('description')} rows={2} className="w-full border border-gray-300 rounded-md px-3 py-2" />
         </div>
-        <button type="submit" className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700">
-          {engagementId ? 'Save & Continue' : 'Create Engagement'}
+        <button type="submit" disabled={isSubmitting} className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50">
+          {isSubmitting ? 'Creating...' : engagementId ? 'Save & Continue' : 'Create Engagement'}
         </button>
       </form>
 

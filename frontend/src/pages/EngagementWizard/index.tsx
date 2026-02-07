@@ -29,10 +29,15 @@ export default function EngagementWizard() {
   }, [id]);
 
   const handleCreate = async (data: Record<string, unknown>) => {
-    const eng = await createEngagement(data as Partial<import('../../types').Engagement>);
-    setEngagementId(eng.id);
-    navigate(`/engagement/${eng.id}/wizard`, { replace: true });
-    setStep(1);
+    try {
+      const eng = await createEngagement(data as Partial<import('../../types').Engagement>);
+      setEngagementId(eng.id);
+      navigate(`/engagement/${eng.id}/wizard`, { replace: true });
+      setStep(1);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      alert(`Failed to create engagement: ${msg}\n\nMake sure the backend is running (uvicorn app.main:app --reload).`);
+    }
   };
 
   const renderStep = () => {
