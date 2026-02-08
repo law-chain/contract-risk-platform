@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from typing import Any
 
 from anthropic import Anthropic
@@ -14,6 +15,50 @@ from app.prompts.mitigation_suggestion import build_mitigation_prompt
 logger = logging.getLogger(__name__)
 
 
+def _repair_json(text: str) -> dict[str, Any]:
+    """Try to parse JSON, repairing common issues from LLM output."""
+    # Strip markdown code fences
+    text = text.strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```[a-z]*\n?", "", text)
+        text = re.sub(r"\n?```\s*$", "", text)
+        text = text.strip()
+
+    # First try: parse as-is
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # Second try: extract the first JSON object from the text
+    match = re.search(r"\{", text)
+    if match:
+        text = text[match.start():]
+
+    # Third try: if truncated, close open structures
+    # Count unmatched braces/brackets
+    open_braces = text.count("{") - text.count("}")
+    open_brackets = text.count("[") - text.count("]")
+
+    # Remove trailing comma or incomplete value
+    text = re.sub(r",\s*$", "", text.rstrip())
+    # Remove incomplete key-value pair at the end
+    text = re.sub(r',\s*"[^"]*"\s*:\s*("[^"]*)?$', "", text)
+    text = re.sub(r',\s*"[^"]*"\s*:\s*$', "", text)
+    # Remove incomplete array element
+    text = re.sub(r",\s*\{[^}]*$", "", text)
+
+    # Recount after cleanup
+    open_braces = text.count("{") - text.count("}")
+    open_brackets = text.count("[") - text.count("]")
+    text += "]" * open_brackets + "}" * open_braces
+
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Could not parse AI response as JSON: {e}. Response started with: {text[:200]}")
+
+
 class ClaudeService:
     def __init__(self):
         self.client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
@@ -23,19 +68,11 @@ class ClaudeService:
         """Make a Claude API call and parse the JSON response."""
         response = self.client.messages.create(
             model=self.model,
-            max_tokens=4096,
+            max_tokens=8192,
             messages=[{"role": "user", "content": prompt}],
         )
         text = response.content[0].text.strip()
-
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            lines = text.split("\n")
-            # Remove first line (```json) and last line (```)
-            lines = [l for l in lines if not l.strip().startswith("```")]
-            text = "\n".join(lines)
-
-        return json.loads(text)
+        return _repair_json(text)
 
     def generate_failure_modes(
         self,

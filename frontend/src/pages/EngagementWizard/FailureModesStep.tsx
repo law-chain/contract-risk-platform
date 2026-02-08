@@ -26,10 +26,12 @@ export default function FailureModesStep({ engagementId }: Props) {
   });
   const [aiLoading, setAiLoading] = useState(false);
   const [aiResults, setAiResults] = useState<Record<string, unknown>[] | null>(null);
+  const [acceptedIndices, setAcceptedIndices] = useState<Set<number>>(new Set());
 
   const createMut = useMutation({
     mutationFn: (data: Partial<FailureMode>) => createFailureMode(engagementId, data),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['failureModes', engagementId] }),
+    onError: (err) => alert(`Failed to save failure mode: ${err instanceof Error ? err.message : err}`),
   });
   const toggleMut = useMutation({
     mutationFn: (id: number) => toggleFailureMode(engagementId, id),
@@ -47,13 +49,17 @@ export default function FailureModesStep({ engagementId }: Props) {
       const response = await generateFailureModes(engagementId, gsId);
       const fms = (response.data as { failure_modes?: Record<string, unknown>[] }).failure_modes || [];
       setAiResults(fms);
-    } catch {
-      alert('AI generation failed. Check your API key.');
+      setAcceptedIndices(new Set());
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      alert(`AI generation failed: ${msg}`);
     }
     setAiLoading(false);
   };
 
-  const acceptAIResult = (fm: Record<string, unknown>) => {
+  const acceptAIResult = (fm: Record<string, unknown>, index: number) => {
+    if (acceptedIndices.has(index)) return;
+    setAcceptedIndices(prev => new Set(prev).add(index));
     createMut.mutate({
       name: fm.name as string,
       description: fm.description as string,
@@ -141,16 +147,23 @@ export default function FailureModesStep({ engagementId }: Props) {
         {aiResults && (
           <div className="mt-4 space-y-3">
             <h3 className="font-medium">AI Suggestions (click to accept)</h3>
-            {aiResults.map((fm, i) => (
-              <div key={i} className="border border-purple-200 bg-purple-50 rounded-md p-3 cursor-pointer hover:bg-purple-100"
-                onClick={() => acceptAIResult(fm)}>
-                <div className="font-medium">{fm.name as string}</div>
-                <div className="text-sm text-gray-600">{fm.description as string}</div>
-                <div className="text-xs text-gray-500 mt-1">
-                  Freq: {fm.frequency_low as number}/{fm.frequency_mid as number}/{fm.frequency_high as number} | Confidence: {((fm.confidence as number ?? 0) * 100).toFixed(0)}%
+            {aiResults.map((fm, i) => {
+              const accepted = acceptedIndices.has(i);
+              return (
+                <div key={i}
+                  className={`border rounded-md p-3 ${accepted ? 'border-green-300 bg-green-50 opacity-60' : 'border-purple-200 bg-purple-50 cursor-pointer hover:bg-purple-100'}`}
+                  onClick={() => acceptAIResult(fm, i)}>
+                  <div className="flex justify-between items-center">
+                    <div className="font-medium">{fm.name as string}</div>
+                    {accepted && <span className="text-green-700 text-sm font-medium">Added</span>}
+                  </div>
+                  <div className="text-sm text-gray-600">{fm.description as string}</div>
+                  <div className="text-xs text-gray-500 mt-1">
+                    Freq: {fm.frequency_low as number}/{fm.frequency_mid as number}/{fm.frequency_high as number} | Confidence: {((fm.confidence as number ?? 0) * 100).toFixed(0)}%
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
