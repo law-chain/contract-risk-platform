@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import axios from 'axios';
 import { getEngagement } from '../../api/engagements';
 import { listParties } from '../../api/parties';
 import { listFailureModes } from '../../api/failureModes';
+import { listLossScenarios } from '../../api/lossScenarios';
 import { listMitigations } from '../../api/mitigations';
 import { runQuantification } from '../../api/quantification';
 
@@ -35,13 +37,37 @@ export default function ReviewStep({ engagementId }: Props) {
 
   const activeFMs = failureModes.filter((fm) => fm.is_included);
 
+  // Query loss scenarios for each active failure mode to check readiness
+  const { data: lossScenarioCounts = {} } = useQuery({
+    queryKey: ['lossScenarioCounts', engagementId, activeFMs.map(fm => fm.id)],
+    queryFn: async () => {
+      const counts: Record<number, number> = {};
+      await Promise.all(activeFMs.map(async (fm) => {
+        const scenarios = await listLossScenarios(engagementId, fm.id);
+        counts[fm.id] = scenarios.length;
+      }));
+      return counts;
+    },
+    enabled: activeFMs.length > 0,
+  });
+
+  const fmsWithScenarios = activeFMs.filter(fm => (lossScenarioCounts[fm.id] ?? 0) > 0);
+  const fmsWithoutScenarios = activeFMs.filter(fm => (lossScenarioCounts[fm.id] ?? 0) === 0);
+  const canRun = fmsWithScenarios.length > 0;
+
   const handleRun = async () => {
     setRunning(true);
     try {
       await runQuantification(engagementId, simCount);
       navigate(`/engagement/${engagementId}/dashboard`);
     } catch (err) {
-      alert('Quantification failed: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      let msg = 'Unknown error';
+      if (axios.isAxiosError(err) && err.response?.data?.detail) {
+        msg = err.response.data.detail;
+      } else if (err instanceof Error) {
+        msg = err.message;
+      }
+      alert(`Quantification failed: ${msg}`);
       setRunning(false);
     }
   };
@@ -68,12 +94,24 @@ export default function ReviewStep({ engagementId }: Props) {
         <div className="mt-4">
           <h3 className="font-medium text-gray-700 mb-2">Active Failure Modes ({activeFMs.length})</h3>
           <div className="space-y-1">
-            {activeFMs.map((fm) => (
-              <p key={fm.id} className="text-sm">
-                {fm.name} <span className="text-gray-500">({fm.category}, freq: {fm.frequency_mid}/yr)</span>
-              </p>
-            ))}
+            {activeFMs.map((fm) => {
+              const scenarioCount = lossScenarioCounts[fm.id] ?? 0;
+              return (
+                <p key={fm.id} className="text-sm">
+                  {fm.name} <span className="text-gray-500">({fm.category}, freq: {fm.frequency_mid}/yr)</span>
+                  {scenarioCount > 0
+                    ? <span className="ml-2 text-green-600">{scenarioCount} loss scenario{scenarioCount !== 1 ? 's' : ''}</span>
+                    : <span className="ml-2 text-red-500">no loss scenarios mapped</span>}
+                </p>
+              );
+            })}
           </div>
+          {fmsWithoutScenarios.length > 0 && (
+            <p className="text-amber-600 text-sm mt-2">
+              {fmsWithoutScenarios.length} failure mode{fmsWithoutScenarios.length !== 1 ? 's have' : ' has'} no loss scenarios.
+              Go to Step 3 (Loss Mapping) to add loss scenarios before running.
+            </p>
+          )}
         </div>
 
         <div className="mt-4">
@@ -100,14 +138,17 @@ export default function ReviewStep({ engagementId }: Props) {
           </div>
           <button
             onClick={handleRun}
-            disabled={running || activeFMs.length === 0}
+            disabled={running || !canRun}
             className="bg-blue-600 text-white px-6 py-3 rounded-md font-medium hover:bg-blue-700 disabled:opacity-50"
           >
             {running ? 'Running Simulation...' : 'Run Monte Carlo Simulation'}
           </button>
         </div>
         {activeFMs.length === 0 && (
-          <p className="text-red-600 text-sm mt-2">Add at least one failure mode with loss scenarios to run.</p>
+          <p className="text-red-600 text-sm mt-2">Add at least one failure mode to run. Go to Step 2 (Failure Modes).</p>
+        )}
+        {activeFMs.length > 0 && !canRun && (
+          <p className="text-red-600 text-sm mt-2">Your failure modes need loss scenarios before you can run. Go to Step 3 (Loss Mapping) to map losses.</p>
         )}
       </div>
     </div>
